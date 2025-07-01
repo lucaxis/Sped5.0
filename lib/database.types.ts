@@ -1,0 +1,115 @@
+export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
+
+export interface Database {
+  public: {
+    Tables: {
+      empresas: {
+        Row: {
+          id: number
+          nome: string
+          armazenamento: string
+          informacoes_sped: string | null
+          nome_base: string | null
+          status: string
+          data_liberacao: string | null
+          progresso: string
+          gerador: string | null
+          enviada: string
+          anotacoes: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: number
+          nome: string
+          armazenamento: string
+          informacoes_sped?: string | null
+          nome_base?: string | null
+          status: string
+          data_liberacao?: string | null
+          progresso: string
+          gerador?: string | null
+          enviada: string
+          anotacoes?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: number
+          nome?: string
+          armazenamento?: string
+          informacoes_sped?: string | null
+          nome_base?: string | null
+          status?: string
+          data_liberacao?: string | null
+          progresso?: string
+          gerador?: string | null
+          enviada?: string
+          anotacoes?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      perfis: {
+        Row: {
+          id: string
+          nome: string
+          cargo: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id: string
+          nome: string
+          cargo?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          nome?: string
+          cargo?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      logs_atividades: {
+        Row: {
+          id: number
+          usuario_id: string | null
+          empresa_id: number | null
+          acao: string
+          detalhes: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: number
+          usuario_id?: string | null
+          empresa_id?: number | null
+          acao: string
+          detalhes?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: number
+          usuario_id?: string | null
+          empresa_id?: number | null
+          acao?: string
+          detalhes?: string | null
+          created_at?: string
+        }
+      }
+    }
+  }
+}
+
+export type Empresa = Database["public"]["Tables"]["empresas"]["Row"]
+export type EmpresaInsert = Database["public"]["Tables"]["empresas"]["Insert"]
+export type EmpresaUpdate = Database["public"]["Tables"]["empresas"]["Update"]
+
+export type Perfil = Database["public"]["Tables"]["perfis"]["Row"]
+export type PerfilInsert = Database["public"]["Tables"]["perfis"]["Insert"]
+export type PerfilUpdate = Database["public"]["Tables"]["perfis"]["Update"]
+
+export type LogAtividade = Database["public"]["Tables"]["logs_atividades"]["Row"]
+export type LogAtividadeInsert = Database["public"]["Tables"]["logs_atividades"]["Insert"]
