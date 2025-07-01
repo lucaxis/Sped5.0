@@ -308,45 +308,61 @@ export async function registrarAtividade(log: LogAtividadeInsert) {
 
 // Função para configurar assinatura em tempo real com reconexão automática
 export function subscribeToEmpresas(callback: (empresa: Empresa) => void) {
-  let channel = supabase
+  let channel = setupSupabaseSubscription(callback); // Helper to set up the subscription
+
+  const handleVisibilityChange = () => {
+    if (document.visibilityState === 'visible') {
+      console.log('Tab became visible, attempting to re-establish real-time connection...');
+      // Unsubscribe from any old channel before creating a new one
+      if (channel) {
+        channel.unsubscribe();
+      }
+      channel = setupSupabaseSubscription(callback);
+    }
+  };
+
+  document.addEventListener('visibilitychange', handleVisibilityChange);
+
+  // Existing reconnection logic for online/offline
+  const handleReconnect = () => {
+    if (navigator.onLine) {
+      console.log("Browser back online, attempting to re-establish real-time connection...");
+      if (channel) {
+        channel.unsubscribe();
+      }
+      channel = setupSupabaseSubscription(callback);
+    }
+  };
+  window.addEventListener("online", handleReconnect);
+  window.addEventListener("offline", () => {
+    console.log("Browser offline, real-time connection likely lost.");
+  });
+
+  return {
+    unsubscribe: () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener("online", handleReconnect);
+      window.removeEventListener("offline", () => {}); // Remove dummy handler
+      if (channel) {
+        channel.unsubscribe();
+      }
+    },
+  };
+}
+
+// Helper function to encapsulate subscription logic
+function setupSupabaseSubscription(callback: (empresa: Empresa) => void) {
+  return supabase
     .channel("empresas-changes")
     .on("postgres_changes", { event: "*", schema: "public", table: "empresas" }, (payload) => {
-      // Invalidar cache quando receber atualizações
-      invalidateCache()
-      callback(payload.new as Empresa)
+      invalidateCache();
+      callback(payload.new as Empresa);
     })
     .subscribe((status) => {
       if (status !== "SUBSCRIBED") {
-        console.log("Status da assinatura:", status)
+        console.log("Status da assinatura:", status);
       }
-    })
-
-  // Configurar reconexão automática
-  const handleReconnect = () => {
-    console.log("Tentando reconectar ao canal de tempo real...")
-    if (channel) {
-      channel.unsubscribe()
-    }
-
-    channel = supabase
-      .channel("empresas-changes")
-      .on("postgres_changes", { event: "*", schema: "public", table: "empresas" }, (payload) => {
-        invalidateCache()
-        callback(payload.new as Empresa)
-      })
-      .subscribe()
-  }
-
-  // Monitorar estado da conexão
-  window.addEventListener("online", handleReconnect)
-
-  // Retornar função para desinscrever e limpar event listeners
-  return {
-    unsubscribe: () => {
-      window.removeEventListener("online", handleReconnect)
-      if (channel) {
-        channel.unsubscribe()
-      }
-    },
-  }
+    });
+}
+  
 }
