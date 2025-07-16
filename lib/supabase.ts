@@ -1,44 +1,94 @@
 import { createClient } from "@supabase/supabase-js"
 import type { Database } from "./database.types"
 
-// Criando um singleton para o cliente Supabase
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 
-// Verificar se as variáveis de ambiente estão definidas
 if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error("Variáveis de ambiente do Supabase não estão definidas")
+  console.warn("⚠️ Variáveis de ambiente do Supabase não estão definidas. Usando cliente mock para desenvolvimento.")
 }
 
-// Configurações otimizadas para suportar múltiplos usuários e conexões
-const options = {
+// Criar cliente Supabase com configurações otimizadas
+export const supabase = createClient<Database>(supabaseUrl || "http://localhost:54321", supabaseAnonKey || "mock-key", {
   auth: {
     persistSession: true,
     autoRefreshToken: true,
+    detectSessionInUrl: true,
   },
   realtime: {
-    timeout: 60000, // Aumentar timeout para conexões realtime
     params: {
-      eventsPerSecond: 10, // Aumentar limite de eventos por segundo
+      eventsPerSecond: 10,
     },
   },
   global: {
     headers: {
-      "X-Client-Info": "sped-management-app",
+      "x-my-custom-header": "sped-management",
     },
   },
-}
+})
 
-export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey, options)
-
-// Função para verificar a saúde da conexão
+// Função para verificar conexão
 export async function checkConnection() {
   try {
-    const { data, error } = await supabase.from("empresas").select("id").limit(1)
-    if (error) throw error
-    return { ok: true, message: "Conexão com Supabase estabelecida com sucesso" }
+    if (!supabaseUrl || !supabaseAnonKey) {
+      return { ok: false, error: "Variáveis de ambiente não configuradas" }
+    }
+
+    const { data, error } = await supabase.from("empresas").select("count").limit(1).single()
+
+    if (error && error.code !== "PGRST116") {
+      return { ok: false, error: error.message }
+    }
+
+    return { ok: true }
   } catch (error) {
-    console.error("Erro ao verificar conexão com Supabase:", error)
-    return { ok: false, message: "Falha na conexão com Supabase", error }
+    console.error("Erro na verificação de conexão:", error)
+    return { ok: false, error: "Erro de conexão" }
+  }
+}
+
+// Função para reconectar o cliente Supabase
+export async function reconnectSupabase(): Promise<boolean> {
+  try {
+    if (!supabaseUrl || !supabaseAnonKey) {
+      console.warn("Não é possível reconectar: variáveis de ambiente não configuradas")
+      return false
+    }
+
+    // Verificar se a sessão ainda é válida
+    const {
+      data: { session },
+    } = await supabase.auth.getSession()
+
+    if (session) {
+      // Tentar uma operação simples para verificar a conexão
+      const { error } = await supabase.from("empresas").select("count").limit(1).single()
+
+      if (!error || error.code === "PGRST116") {
+        return true
+      }
+    }
+
+    // Se chegou aqui, a conexão falhou
+    return false
+  } catch (error) {
+    console.error("Erro ao reconectar Supabase:", error)
+    return false
+  }
+}
+
+// Função para verificar se o banco de dados está acessível
+export async function checkDatabaseConnection(): Promise<boolean> {
+  try {
+    if (!supabaseUrl || !supabaseAnonKey) {
+      return false
+    }
+
+    const { error } = await supabase.from("empresas").select("count").limit(1).single()
+
+    return !error || error.code === "PGRST116"
+  } catch (error) {
+    console.error("Erro ao verificar conexão com banco:", error)
+    return false
   }
 }

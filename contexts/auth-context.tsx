@@ -34,6 +34,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         error,
       } = await supabase.auth.getSession()
 
+      // ⚠️ Token de refresh inválido – limpa tudo e força login
+      if (error && error.message?.includes("Invalid Refresh Token")) {
+        console.warn("[Auth] Refresh token inválido. Limpando sessão local.")
+        await supabase.auth.signOut({ scope: "local" }) // remove apenas do cliente
+        setSession(null)
+        setUser(null)
+        setPerfil(null)
+        setIsLoading(false)
+        return
+      }
+
+      console.log("DEBUG: Sessão obtida:", session) //teste
       if (error) {
         console.error("Erro ao obter sessão:", error)
       }
@@ -41,13 +53,51 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setSession(session)
       setUser(session?.user || null)
 
+      console.log("DEBUG: user object depois de set:", session?.user) // teste
       if (session?.user) {
-        const { data: perfilData } = await supabase.from("perfis").select("*").eq("id", session.user.id).single()
+        const userId = session.user.id
+        console.log("DEBUG: userId obtido (Passo 1):", userId) // Este deve aparecer
 
-        setPerfil(perfilData)
+        let cleanedUserId: string // Declare a variável explicitamente
+
+        console.log("DEBUG: Antes da verificação de ':' (Passo 2)") // Verifique se este aparece
+
+        if (userId.includes(":")) {
+          cleanedUserId = userId.split(":")[0]
+          console.log("DEBUG: userId CONTINHA ':' (Passo 3a):", cleanedUserId) // Verifique se este aparece
+        } else {
+          cleanedUserId = userId
+          console.log("DEBUG: userId NÃO CONTINHA ':' (Passo 3b):", cleanedUserId) // Verifique se este aparece
+        }
+
+        console.log("DEBUG: Depois do cálculo de cleanedUserId (Passo 4):", cleanedUserId) // Este é o log alvo!
+
+        try {
+          const { data: perfilData, error: perfilError } = await supabase
+            .from("perfis")
+            .select("*")
+            .eq("id", cleanedUserId) // Usar o ID "limpo"
+            .single()
+
+          if (perfilError) {
+            console.error("ERRO AO BUSCAR PERFIL:", perfilError)
+            console.error(
+              "DETALHES DO ERRO DO PERFIL:",
+              perfilError.message,
+              perfilError.code,
+              perfilError.details,
+              perfilError.hint,
+            )
+          } else {
+            console.log("Perfil buscado com sucesso:", perfilData)
+          }
+          setPerfil(perfilData)
+        } catch (err) {
+          console.error("ERRO INESPERADO NA BUSCA DO PERFIL (catch):", err)
+        }
       }
 
-      setIsLoading(false)
+      setIsLoading(false) // já fora dos fluxos de erro
     }
 
     getSession()
@@ -56,6 +106,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (event, newSession) => {
+      if (event === "TOKEN_REFRESH_FAILED") {
+        console.warn("[Auth] Falha ao renovar token. Limpando sessão local.")
+        await supabase.auth.signOut({ scope: "local" })
+        setSession(null)
+        setUser(null)
+        setPerfil(null)
+        router.push("/login")
+        return
+      }
+
       setSession(newSession)
       setUser(newSession?.user || null)
 

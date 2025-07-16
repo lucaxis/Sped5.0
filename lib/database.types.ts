@@ -18,21 +18,23 @@ export interface Database {
           anotacoes: string | null
           created_at: string
           updated_at: string
+          created_by: string | null
         }
         Insert: {
           id?: number
           nome: string
-          armazenamento: string
+          armazenamento?: string
           informacoes_sped?: string | null
           nome_base?: string | null
-          status: string
+          status?: string
           data_liberacao?: string | null
-          progresso: string
+          progresso?: string
           gerador?: string | null
-          enviada: string
+          enviada?: string
           anotacoes?: string | null
           created_at?: string
           updated_at?: string
+          created_by?: string | null
         }
         Update: {
           id?: number
@@ -48,68 +50,47 @@ export interface Database {
           anotacoes?: string | null
           created_at?: string
           updated_at?: string
+          created_by?: string | null
         }
       }
-      perfis: {
+      profiles: {
         Row: {
           id: string
-          nome: string
-          cargo: string | null
+          nome: string | null
+          email: string | null
           created_at: string
           updated_at: string
         }
         Insert: {
           id: string
-          nome: string
-          cargo?: string | null
+          nome?: string | null
+          email?: string | null
           created_at?: string
           updated_at?: string
         }
         Update: {
           id?: string
-          nome?: string
-          cargo?: string | null
+          nome?: string | null
+          email?: string | null
           created_at?: string
           updated_at?: string
         }
       }
-      logs_atividades: {
-        Row: {
-          id: number
-          usuario_id: string | null
-          empresa_id: number | null
-          acao: string
-          detalhes: string | null
-          created_at: string
-        }
-        Insert: {
-          id?: number
-          usuario_id?: string | null
-          empresa_id?: number | null
-          acao: string
-          detalhes?: string | null
-          created_at?: string
-        }
-        Update: {
-          id?: number
-          usuario_id?: string | null
-          empresa_id?: number | null
-          acao?: string
-          detalhes?: string | null
-          created_at?: string
-        }
-      }
+    }
+    Views: {
+      [_ in never]: never
+    }
+    Functions: {
+      [_ in never]: never
+    }
+    Enums: {
+      [_ in never]: never
+    }
+    CompositeTypes: {
+      [_ in never]: never
     }
   }
 }
 
 export type Empresa = Database["public"]["Tables"]["empresas"]["Row"]
-export type EmpresaInsert = Database["public"]["Tables"]["empresas"]["Insert"]
-export type EmpresaUpdate = Database["public"]["Tables"]["empresas"]["Update"]
-
-export type Perfil = Database["public"]["Tables"]["perfis"]["Row"]
-export type PerfilInsert = Database["public"]["Tables"]["perfis"]["Insert"]
-export type PerfilUpdate = Database["public"]["Tables"]["perfis"]["Update"]
-
-export type LogAtividade = Database["public"]["Tables"]["logs_atividades"]["Row"]
-export type LogAtividadeInsert = Database["public"]["Tables"]["logs_atividades"]["Insert"]
+export type Profile = Database["public"]["Tables"]["profiles"]["Row"]

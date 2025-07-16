@@ -505,7 +505,7 @@ export default function SpedManagementSystem() {
               size="sm"
               onClick={handleManualRefresh}
               disabled={loading || connectionStatus !== "connected"}
-              className="flex items-center gap-1"
+              className="flex items-center gap-1 bg-transparent"
             >
               <RefreshCw className={`h-3 w-3 ${loading ? "animate-spin" : ""}`} />
               Atualizar
