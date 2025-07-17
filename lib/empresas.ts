@@ -214,6 +214,8 @@ export function subscribeToEmpresas(callback: (empresa: Empresa) => void) {
   const MAX_RECONNECT = 8 // número maior de tentativas
   let reconnectTimeout: NodeJS.Timeout | null = null
 
+  let inFallback = false // indica se estamos em modo polling
+
   const connect = () => {
     try {
       subscription = supabase
@@ -241,8 +243,11 @@ export function subscribeToEmpresas(callback: (empresa: Empresa) => void) {
           if (status === "SUBSCRIBED") {
             reconnectAttempts = 0 // zerar contador
             stopPolling() // se estava em polling, cancela
+            inFallback = false
             console.log("✅ Realtime reconectado")
           } else if (status === "CLOSED" || status === "CHANNEL_ERROR") {
+            if (inFallback) return // já estamos em polling, ignora
+
             console.warn("⚠️ Realtime perdido, tentativa de reconexão…")
 
             if (reconnectAttempts < MAX_RECONNECT) {
@@ -256,7 +261,8 @@ export function subscribeToEmpresas(callback: (empresa: Empresa) => void) {
               }, delay)
             } else {
               console.error("❌ Máximo de tentativas atingido — iniciando fallback de polling")
-              startPolling() // ativa fallback
+              inFallback = true
+              startPolling()
             }
           }
         })
@@ -290,6 +296,16 @@ export function subscribeToEmpresas(callback: (empresa: Empresa) => void) {
   function startPolling() {
     if (pollingTimer) return
     pollingTimer = setInterval(pollOnce, POLLING_MS)
+
+    // enquanto em polling, tente recriar o canal a cada 30 s
+    setTimeout(() => {
+      if (inFallback) {
+        console.log("🔄 Tentando restabelecer WebSocket…")
+        reconnectAttempts = 0
+        subscription?.unsubscribe()
+        connect()
+      }
+    }, 30_000)
   }
 
   function stopPolling() {
