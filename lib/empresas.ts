@@ -1,170 +1,270 @@
 import { supabase } from "./supabase"
-import type { Empresa, LogAtividadeInsert } from "./database.types"
+import type { Empresa, EmpresaInsert, EmpresaUpdate, LogAtividadeInsert } from "./database.types"
 
-// Cache local para empresas
-let empresasCache: Empresa[] = []
-let lastCacheUpdate: Date | null = null
-const CACHE_DURATION = 30000 // 30 segundos
+// Cache para minimizar requisições repetidas
+let empresasCache: Empresa[] | null = null
+let lastFetchTime = 0
+const CACHE_TTL = 10000 // 10 segundos
 
-// Função para obter empresas com cache inteligente
-export async function getEmpresas(forceRefresh = false): Promise<Empresa[]> {
+// Função para buscar todas as empresas com cache inteligente
+export async function getEmpresas(forceRefresh = false) {
+  const now = Date.now()
+
+  // Usar cache se disponível e não expirado, a menos que forceRefresh seja true
+  if (!forceRefresh && empresasCache && now - lastFetchTime < CACHE_TTL) {
+    return empresasCache
+  }
+
   try {
-    // Verificar se deve usar cache
-    if (!forceRefresh && empresasCache.length > 0 && lastCacheUpdate) {
-      const timeSinceUpdate = Date.now() - lastCacheUpdate.getTime()
-      if (timeSinceUpdate < CACHE_DURATION) {
-        return empresasCache
-      }
-    }
-
-    const { data, error } = await supabase.from("empresas").select("*").order("id", { ascending: true })
+    const { data, error } = await supabase
+      .from("empresas")
+      .select("*")
+      .order("status", { ascending: false })
+      .order("data_liberacao", { ascending: true, nullsLast: true })
 
     if (error) {
       console.error("Erro ao buscar empresas:", error)
-      // Retornar cache se disponível em caso de erro
-      if (empresasCache.length > 0) {
-        return empresasCache
-      }
       throw error
     }
 
     // Atualizar cache
     empresasCache = data || []
-    lastCacheUpdate = new Date()
+    lastFetchTime = now
 
-    return data || []
+    return empresasCache
   } catch (error) {
-    console.error("Erro ao carregar empresas:", error)
-    // Retornar cache se disponível
-    if (empresasCache.length > 0) {
+    console.error("Erro ao buscar empresas:", error)
+    // Se houver erro mas tivermos cache, retornar o cache mesmo expirado
+    if (empresasCache) {
       return empresasCache
     }
-    return []
+    throw error
   }
 }
 
-// Função para criar nova empresa
-export async function createEmpresa(empresa: any, userId: string): Promise<void> {
-  const { error } = await supabase.from("empresas").insert([
-    {
-      ...empresa,
-      created_by: userId,
-      updated_at: new Date().toISOString(),
-    },
-  ])
+// Função para invalidar o cache
+export function invalidateCache() {
+  empresasCache = null
+}
+
+// Função para buscar uma empresa por ID
+export async function getEmpresaById(id: number) {
+  // Tentar buscar do cache primeiro
+  if (empresasCache) {
+    const cachedEmpresa = empresasCache.find((e) => e.id === id)
+    if (cachedEmpresa) return cachedEmpresa
+  }
+
+  const { data, error } = await supabase.from("empresas").select("*").eq("id", id).single()
+
+  if (error) {
+    console.error(`Erro ao buscar empresa com ID ${id}:`, error)
+    throw error
+  }
+
+  return data
+}
+
+// Função para criar uma nova empresa
+export async function createEmpresa(empresa: EmpresaInsert, usuarioId: string) {
+  const { data, error } = await supabase.from("empresas").insert(empresa).select()
 
   if (error) {
     console.error("Erro ao criar empresa:", error)
     throw error
   }
 
-  // Invalidar cache
-  lastCacheUpdate = null
+  // Registrar atividade
+  if (data && data[0]) {
+    await registrarAtividade({
+      usuario_id: usuarioId,
+      empresa_id: data[0].id,
+      acao: "criar",
+      detalhes: `Empresa ${empresa.nome} criada`,
+    })
+  }
+
+  // Invalidar cache após modificação
+  invalidateCache()
+
+  return data && data[0]
 }
 
-// Função para atualizar empresa
-export async function updateEmpresa(id: number, updates: Partial<Empresa>, userId: string): Promise<void> {
-  const { error } = await supabase
-    .from("empresas")
-    .update({
-      ...updates,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", id)
+// Função para atualizar uma empresa
+export async function updateEmpresa(id: number, updates: EmpresaUpdate, usuarioId: string) {
+  const { data, error } = await supabase.from("empresas").update(updates).eq("id", id).select()
 
   if (error) {
-    console.error("Erro ao atualizar empresa:", error)
+    console.error(`Erro ao atualizar empresa com ID ${id}:`, error)
     throw error
   }
 
-  // Invalidar cache
-  lastCacheUpdate = null
-}
-
-// Função para liberar empresa
-export async function liberarEmpresa(id: number, dataLiberacao: string, userId: string): Promise<void> {
-  const { error } = await supabase
-    .from("empresas")
-    .update({
-      status: "Liberada",
-      data_liberacao: dataLiberacao,
-      progresso: "Gerar",
-      updated_at: new Date().toISOString(),
+  // Registrar atividade
+  if (data && data[0]) {
+    await registrarAtividade({
+      usuario_id: usuarioId,
+      empresa_id: id,
+      acao: "atualizar",
+      detalhes: `Empresa ${data[0].nome} atualizada`,
     })
-    .eq("id", id)
-
-  if (error) {
-    console.error("Erro ao liberar empresa:", error)
-    throw error
   }
 
-  // Invalidar cache
-  lastCacheUpdate = null
+  // Invalidar cache após modificação
+  invalidateCache()
+
+  return data && data[0]
+}
+
+// Função para liberar uma empresa
+export async function liberarEmpresa(id: number, dataLiberacao: string, usuarioId: string) {
+  try {
+    const { data, error } = await supabase
+      .from("empresas")
+      .update({
+        status: "Liberada",
+        data_liberacao: dataLiberacao,
+        progresso: "Gerar",
+      })
+      .eq("id", id)
+      .select()
+
+    if (error) {
+      console.error(`Erro ao liberar empresa com ID ${id}:`, error)
+      throw error
+    }
+
+    // Registrar atividade
+    if (data && data[0]) {
+      await registrarAtividade({
+        usuario_id: usuarioId,
+        empresa_id: id,
+        acao: "liberar",
+        detalhes: `Empresa ${data[0].nome} liberada em ${dataLiberacao}`,
+      })
+    }
+
+    // Invalidar cache após modificação
+    invalidateCache()
+
+    return data && data[0]
+  } catch (error) {
+    console.error(`Erro ao liberar empresa com ID ${id}:`, error)
+    throw error
+  }
 }
 
 // Função para iniciar geração
-export async function iniciarGeracao(id: number, gerador: string, userId: string): Promise<void> {
-  const { error } = await supabase
+export async function iniciarGeracao(id: number, gerador: string, usuarioId: string) {
+  const { data, error } = await supabase
     .from("empresas")
     .update({
       progresso: "Em Andamento",
       gerador: gerador,
-      updated_at: new Date().toISOString(),
     })
     .eq("id", id)
+    .select()
 
   if (error) {
-    console.error("Erro ao iniciar geração:", error)
+    console.error(`Erro ao iniciar geração para empresa com ID ${id}:`, error)
     throw error
   }
 
-  // Invalidar cache
-  lastCacheUpdate = null
+  // Registrar atividade
+  if (data && data[0]) {
+    await registrarAtividade({
+      usuario_id: usuarioId,
+      empresa_id: id,
+      acao: "iniciar_geracao",
+      detalhes: `Geração iniciada para empresa ${data[0].nome} por ${gerador}`,
+    })
+  }
+
+  // Invalidar cache após modificação
+  invalidateCache()
+
+  return data && data[0]
 }
 
 // Função para marcar como concluído
-export async function marcarConcluido(id: number, userId: string): Promise<void> {
-  const { error } = await supabase
+export async function marcarConcluido(id: number, usuarioId: string) {
+  const { data, error } = await supabase
     .from("empresas")
     .update({
       status: "Concluída",
       progresso: "Gerado",
       enviada: "Sim",
-      updated_at: new Date().toISOString(),
     })
     .eq("id", id)
+    .select()
 
   if (error) {
-    console.error("Erro ao marcar como concluído:", error)
+    console.error(`Erro ao marcar como concluído empresa com ID ${id}:`, error)
     throw error
   }
 
-  // Invalidar cache
-  lastCacheUpdate = null
+  // Registrar atividade
+  if (data && data[0]) {
+    await registrarAtividade({
+      usuario_id: usuarioId,
+      empresa_id: id,
+      acao: "concluir",
+      detalhes: `Empresa ${data[0].nome} marcada como concluída`,
+    })
+  }
+
+  // Invalidar cache após modificação
+  invalidateCache()
+
+  return data && data[0]
 }
 
 // Função para alternar status de enviada
-export async function alternarEnviada(id: number, novoStatus: "Sim" | "Não", userId: string): Promise<void> {
-  const { error } = await supabase
+export async function alternarEnviada(id: number, novoStatus: "Sim" | "Não", usuarioId: string) {
+  const { data, error } = await supabase
     .from("empresas")
     .update({
       enviada: novoStatus,
-      updated_at: new Date().toISOString(),
     })
     .eq("id", id)
+    .select()
 
   if (error) {
-    console.error("Erro ao alternar enviada:", error)
+    console.error(`Erro ao alternar status de enviada para empresa com ID ${id}:`, error)
     throw error
   }
 
-  // Invalidar cache
-  lastCacheUpdate = null
+  // Registrar atividade
+  if (data && data[0]) {
+    await registrarAtividade({
+      usuario_id: usuarioId,
+      empresa_id: id,
+      acao: "alternar_enviada",
+      detalhes: `Status de enviada alterado para ${novoStatus} na empresa ${data[0].nome}`,
+    })
+  }
+
+  // Invalidar cache após modificação
+  invalidateCache()
+
+  return data && data[0]
 }
 
-// Função para resetar empresas
-export async function resetarEmpresas(userId: string): Promise<void> {
-  const { error } = await supabase
+// Função para resetar todas as empresas
+export async function resetarEmpresas(usuarioId: string) {
+  // Primeiro, vamos buscar todas as empresas para garantir que todas sejam resetadas
+  const { data: empresas, error: fetchError } = await supabase.from("empresas").select("id")
+
+  if (fetchError) {
+    console.error("Erro ao buscar empresas para resetar:", fetchError)
+    throw fetchError
+  }
+
+  if (!empresas || empresas.length === 0) {
+    return [] // Não há empresas para resetar
+  }
+
+  // Agora vamos atualizar todas as empresas
+  const { data, error } = await supabase
     .from("empresas")
     .update({
       status: "Não Liberada",
@@ -172,184 +272,81 @@ export async function resetarEmpresas(userId: string): Promise<void> {
       progresso: "-",
       gerador: null,
       enviada: "Não",
-      updated_at: new Date().toISOString(),
     })
-    .neq("id", 0) // Atualizar todos os registros
+    .in(
+      "id",
+      empresas.map((e) => e.id),
+    )
+    .select()
 
   if (error) {
     console.error("Erro ao resetar empresas:", error)
     throw error
   }
 
-  // Invalidar cache
-  lastCacheUpdate = null
+  // Registrar atividade
+  await registrarAtividade({
+    usuario_id: usuarioId,
+    acao: "resetar_tudo",
+    detalhes: `Todas as empresas foram resetadas (${empresas.length} empresas)`,
+  })
+
+  // Invalidar cache após modificação
+  invalidateCache()
+
+  return data
 }
 
-// Função para forçar refresh dos dados
-export async function forceRefresh(): Promise<Empresa[]> {
-  lastCacheUpdate = null
-  return await getEmpresas(true)
-}
+// Função para registrar atividade
+export async function registrarAtividade(log: LogAtividadeInsert) {
+  const { error } = await supabase.from("logs_atividades").insert(log)
 
-// Função para verificar conexão com banco
-export async function checkDatabaseConnection(): Promise<boolean> {
-  try {
-    const { error } = await supabase.from("empresas").select("count").limit(1).single()
-
-    return !error || error.code === "PGRST116"
-  } catch (error) {
-    console.error("Erro ao verificar conexão com banco:", error)
-    return false
+  if (error) {
+    console.error("Erro ao registrar atividade:", error)
   }
 }
 
-// Função para configurar WebSocket com reconexão automática
+// Função para configurar assinatura em tempo real com reconexão automática
 export function subscribeToEmpresas(callback: (empresa: Empresa) => void) {
-  // ---- Fallback de polling ----
-  const POLLING_MS = 10_000 // 10 s
-  let pollingTimer: NodeJS.Timeout | null = null
-
-  let subscription: any = null
-  let reconnectAttempts = 0
-  const MAX_RECONNECT = 8 // número maior de tentativas
-  let reconnectTimeout: NodeJS.Timeout | null = null
-
-  let inFallback = false // indica se estamos em modo polling
-
-  const connect = () => {
-    try {
-      subscription = supabase
-        .channel("empresas-changes")
-        .on(
-          "postgres_changes",
-          {
-            event: "*",
-            schema: "public",
-            table: "empresas",
-          },
-          (payload) => {
-            console.log("Mudança recebida:", payload)
-
-            if (payload.new && typeof payload.new === "object") {
-              callback(payload.new as Empresa)
-              // Invalidar cache quando houver mudanças
-              lastCacheUpdate = null
-            }
-          },
-        )
-        .subscribe((status) => {
-          console.log("Status da assinatura:", status)
-
-          if (status === "SUBSCRIBED") {
-            reconnectAttempts = 0 // zerar contador
-            stopPolling() // se estava em polling, cancela
-            inFallback = false
-            console.log("✅ Realtime reconectado")
-          } else if (status === "CLOSED" || status === "CHANNEL_ERROR") {
-            if (inFallback) return // já estamos em polling, ignora
-
-            console.warn("⚠️ Realtime perdido, tentativa de reconexão…")
-
-            if (reconnectAttempts < MAX_RECONNECT) {
-              reconnectAttempts++
-              const delay = Math.min(1000 * 2 ** reconnectAttempts, 30_000)
-
-              reconnectTimeout = setTimeout(() => {
-                console.log(`Tentativa ${reconnectAttempts}/${MAX_RECONNECT}`)
-                subscription?.unsubscribe()
-                connect()
-              }, delay)
-            } else {
-              console.error("❌ Máximo de tentativas atingido — iniciando fallback de polling")
-              inFallback = true
-              startPolling()
-            }
-          }
-        })
-    } catch (error) {
-      console.error("Erro ao configurar subscription:", error)
-    }
-  }
-
-  // ---------------- Polling ----------------
-  async function pollOnce() {
-    try {
-      const { data, error } = await supabase
-        .from("empresas")
-        .select("updated_at") // consulta leve
-        .order("updated_at", { ascending: false })
-        .limit(1)
-
-      if (!error && data) {
-        // Detectou que o backend responde → tentar restabelecer o websocket
-        if (pollingTimer) {
-          stopPolling()
-          console.log("🎉 Backend responde — voltando ao realtime")
-          connect()
-        }
+  let channel = supabase
+    .channel("empresas-changes")
+    .on("postgres_changes", { event: "*", schema: "public", table: "empresas" }, (payload) => {
+      // Invalidar cache quando receber atualizações
+      invalidateCache()
+      callback(payload.new as Empresa)
+    })
+    .subscribe((status) => {
+      if (status !== "SUBSCRIBED") {
+        console.log("Status da assinatura:", status)
       }
-    } catch (err) {
-      console.error("Polling error:", err)
+    })
+
+  // Configurar reconexão automática
+  const handleReconnect = () => {
+    console.log("Tentando reconectar ao canal de tempo real...")
+    if (channel) {
+      channel.unsubscribe()
     }
+
+    channel = supabase
+      .channel("empresas-changes")
+      .on("postgres_changes", { event: "*", schema: "public", table: "empresas" }, (payload) => {
+        invalidateCache()
+        callback(payload.new as Empresa)
+      })
+      .subscribe()
   }
 
-  function startPolling() {
-    if (pollingTimer) return
-    pollingTimer = setInterval(pollOnce, POLLING_MS)
+  // Monitorar estado da conexão
+  window.addEventListener("online", handleReconnect)
 
-    // enquanto em polling, tente recriar o canal a cada 30 s
-    setTimeout(() => {
-      if (inFallback) {
-        console.log("🔄 Tentando restabelecer WebSocket…")
-        reconnectAttempts = 0
-        subscription?.unsubscribe()
-        connect()
-      }
-    }, 30_000)
-  }
-
-  function stopPolling() {
-    if (pollingTimer) {
-      clearInterval(pollingTimer)
-      pollingTimer = null
-    }
-  }
-
-  // Iniciar conexão
-  connect()
-
-  // Retornar função de cleanup
+  // Retornar função para desinscrever e limpar event listeners
   return {
     unsubscribe: () => {
-      if (reconnectTimeout) clearTimeout(reconnectTimeout)
-      stopPolling() // <- novo
-      subscription?.unsubscribe()
-    },
-    getConnectionStatus: () => {
-      return subscription?.state === "joined"
-    },
-    forceClearCacheAndRefresh: async () => {
-      lastCacheUpdate = null
-      return await getEmpresas(true)
+      window.removeEventListener("online", handleReconnect)
+      if (channel) {
+        channel.unsubscribe()
+      }
     },
   }
-}
-
-// -------------------------------------------------------------
-// Registrar atividade no Supabase (log de auditoria)
-export async function registrarAtividade(log: LogAtividadeInsert): Promise<void> {
-  try {
-    const { error } = await supabase.from("logs_atividades").insert(log)
-    if (error) {
-      // Apenas logar, não quebrar o fluxo principal
-      console.error("Erro ao registrar atividade:", error)
-    }
-  } catch (err) {
-    console.error("Erro inesperado ao registrar atividade:", err)
-  }
-}
-
-// Função para configurar WebSocket client (compatibilidade)
-export function setupWebSocketClient(callback: (empresa: Empresa) => void) {
-  return subscribeToEmpresas(callback)
 }
